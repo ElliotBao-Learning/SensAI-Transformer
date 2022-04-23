@@ -10,6 +10,8 @@ def apoz_scoring(activation):
     activation = (activation.abs() <= 0.005).float()
     if activation.dim() == 4:
         featuremap_apoz_mat = activation.mean(dim=(0, 2, 3))
+    elif activation.dim() == 3:
+        featuremap_apoz_mat = activation.mean(dim=(0, 2))
     elif activation.dim() == 2:
         featuremap_apoz_mat = activation.mean(dim=(0, 1))
     else:
@@ -20,8 +22,11 @@ def apoz_scoring(activation):
 
 def avg_scoring(activation):
     activation = activation.abs()
+    print(activation.shape)
     if activation.dim() == 4:
         featuremap_avg_mat = activation.mean(dim=(0, 2, 3))
+    elif activation.dim() == 3:
+        featuremap_avg_mat = activation.mean(dim=(0, 2))
     elif activation.dim() == 2:
         featuremap_avg_mat = activation.mean(dim=(0, 1))
     else:
@@ -77,6 +82,9 @@ class ActivationRecord:
         if self.arch == "shufflenetv2":
             if module.__class__.__name__ == 'BatchNorm2d':
                 self.parse_activation(F.relu(output))
+        elif self.arch == "vit":
+            if module.__class__.__name__ == 'GELU':
+                self.parse_activation(output)
         else:
             if module.__class__.__name__ == 'ReLU':
                 self.parse_activation(output)
