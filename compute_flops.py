@@ -44,7 +44,6 @@ def print_model_param_flops(model=None, input_res=224, multiply_adds=True):
     list_linear=[]
     def linear_hook(self, input, output):
         batch_size = input[0].size(0) if input[0].dim() == 2 else 1
-
         weight_ops = self.weight.nelement() * (2 if multiply_adds else 1)
         bias_ops = self.bias.nelement()
 
@@ -85,7 +84,7 @@ def print_model_param_flops(model=None, input_res=224, multiply_adds=True):
         if not childrens:
             if isinstance(net, torch.nn.Conv2d):
                 net.register_forward_hook(conv_hook)
-            if isinstance(net, torch.nn.Linear):
+            if isinstance(net, torch.nn.Linear) and net.bias is not None:
                 net.register_forward_hook(linear_hook)
             if isinstance(net, torch.nn.BatchNorm2d):
                 net.register_forward_hook(bn_hook)

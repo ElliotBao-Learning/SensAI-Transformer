@@ -100,6 +100,9 @@ def main():
                                 args.ngroups, same_group_size=True)
         print("groups: ", groups)
         print("\n====================== Grouping Result ========================\n")
+        if args.arch == 'vit':
+            np.save(open("prune_candidate_logs/grouping_config.npy", "wb"), groups)
+            return
         process_list = [None for _ in range(args.gpu_num)]
         for i, group in enumerate(groups):
             if process_list[i % args.gpu_num]:

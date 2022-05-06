@@ -126,3 +126,4 @@ pruned_models/
 pruned_models_retrained/
 prune_candidate_logs/
 data/
+warm_up_models/

@@ -11,7 +11,7 @@ def apoz_scoring(activation):
     if activation.dim() == 4:
         featuremap_apoz_mat = activation.mean(dim=(0, 2, 3))
     elif activation.dim() == 3:
-        featuremap_apoz_mat = activation.mean(dim=(0, 2))
+        featuremap_apoz_mat = activation.mean(dim=(0, 1))
     elif activation.dim() == 2:
         featuremap_apoz_mat = activation.mean(dim=(0, 1))
     else:
@@ -22,11 +22,10 @@ def apoz_scoring(activation):
 
 def avg_scoring(activation):
     activation = activation.abs()
-    print(activation.shape)
     if activation.dim() == 4:
         featuremap_avg_mat = activation.mean(dim=(0, 2, 3))
     elif activation.dim() == 3:
-        featuremap_avg_mat = activation.mean(dim=(0, 2))
+        featuremap_avg_mat = activation.mean(dim=(0, 1))
     elif activation.dim() == 2:
         featuremap_avg_mat = activation.mean(dim=(0, 1))
     else:

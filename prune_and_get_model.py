@@ -1,5 +1,6 @@
 import re
 import glob
+from tokenize import group
 import models.cifar as models
 import os
 import sys
@@ -26,6 +27,10 @@ from prune_utils.layer_prune import (
     prune_shuffle_layer)
 from models.cifar.resnet import Bottleneck
 import torchvision.models as imagenet_models
+from models.cifar.vit import vit, channel_selection
+from models.cifar.vit_slim import vit_slim
+from datasets import cifar
+from vit_record import ViTRecord
 
 parser = argparse.ArgumentParser(description='VGG with mask layer on cifar10')
 parser.add_argument('-d', '--dataset', required=True, type=str)
@@ -197,6 +202,146 @@ def prune_imagenet_worker(proc_ind, model, candidates, group_indices, group_id, 
     torch.save(model, os.path.join(model_save_directory, pruned_model_name))
     print('Pruned model saved at', model_save_directory)
 
+def prune_vit(model, groups):
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    total = 0
+    for m in model.modules():
+        if isinstance(m, channel_selection):
+            total += m.indexes.data.shape[0]
+
+    bn = torch.zeros(total)
+    index = 0
+    for m in model.modules():
+        if isinstance(m, channel_selection):
+            size = m.indexes.data.shape[0]
+            bn[index:(index+size)] = m.indexes.data.abs().clone()
+            index += size
+
+    percent = 0.3
+    y, i = torch.sort(bn)
+    thre_index = int(total * percent)
+    thre = y[thre_index]
+
+    dataset = cifar.CIFAR10TrainingSetWrapper([0,2,4,6,8], False)
+    num_classes = 10
+    pruning_loader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=1000,
+            num_workers=2,
+            pin_memory=False)
+
+    print('\nMake a test run to generate activations. \n Using training set.\n')
+    with ViTRecord(model, 'vit') as recorder:
+        # collect pruning data
+        #bar = tqdm(total=len(pruning_loader))
+        for batch_idx, (inputs, _) in enumerate(pruning_loader):
+            #bar.update(1)
+            inputs = inputs.to(device)
+            recorder.record_batch(inputs)
+
+    pruned = 0
+    cfg = []
+    cfg_mask = []
+    for k, m in enumerate(model.modules()):
+        if isinstance(m, channel_selection):
+            # print(k)
+            # print(m)
+            if k in [16,40,64,88,112,136]:
+                weight_copy = torch.from_numpy(recorder.scores[(k-16)//12]).abs().cuda()
+                # weight_copy = m.indexes.data.abs().clone()
+                mask = weight_copy.gt(thre).float().cuda()
+                thre_ = thre.clone()
+                while (torch.sum(mask)%8 !=0):                       # heads
+                    thre_ = thre_ - 0.0001
+                    mask = weight_copy.gt(thre_).float().cuda()
+            else:
+                weight_copy = torch.from_numpy(recorder.scores[(k-16)//12]).abs().cuda()
+                # weight_copy = m.indexes.data.abs().clone()
+                mask = weight_copy.gt(thre).float().cuda()
+            pruned = pruned + mask.shape[0] - torch.sum(mask)
+            m.indexes.data.mul_(mask)
+            cfg.append(int(torch.sum(mask)))
+            cfg_mask.append(mask.clone())
+            print('layer index: {:d} \t total channel: {:d} \t remaining channel: {:d}'.
+                format(k, mask.shape[0], int(torch.sum(mask))))
+
+    pruned_ratio = pruned/total
+    print('Pre-processing Successful!')
+    print(cfg)
+        
+
+    for group_idx in range(groups.shape[0]):
+        cfg_prune = []
+        for i in range(len(cfg)):
+            if i%2!=0:
+                cfg_prune.append([cfg[i-1],cfg[i]])
+
+        newmodel = vit_slim(image_size = 32,
+            patch_size = 4,
+            num_classes = 10,
+            dim = 512,
+            depth = 6,
+            heads = 8,
+            mlp_dim = 512,
+            dropout = 0.1,
+            emb_dropout = 0.1,
+            cfg=cfg_prune)
+
+        newmodel.to(device)
+        # num_parameters = sum([param.nelement() for param in newmodel.parameters()])
+
+        newmodel_dict = newmodel.state_dict().copy()
+
+        i = 0
+        newdict = {}
+        for k,v in model.state_dict().items():
+            if 'net1.0.weight' in k:
+                # print(k)
+                # print(v.size())
+                # print('----------')
+                idx = np.squeeze(np.argwhere(np.asarray(cfg_mask[i].cpu().numpy())))
+                newdict[k] = v[idx.tolist()].clone()
+            elif 'net1.0.bias' in k:
+                # print(k)
+                # print(v.size())
+                # print('----------')
+                idx = np.squeeze(np.argwhere(np.asarray(cfg_mask[i].cpu().numpy())))
+                newdict[k] = v[idx.tolist()].clone()
+            elif 'to_q' in k or 'to_k' in k or 'to_v' in k:
+                # print(k)
+                # print(v.size())
+                # print('----------')
+                idx = np.squeeze(np.argwhere(np.asarray(cfg_mask[i].cpu().numpy())))
+                newdict[k] = v[idx.tolist()].clone()
+            elif 'net2.0.weight' in k:
+                # print(k)
+                # print(v.size())
+                # print('----------')
+                idx = np.squeeze(np.argwhere(np.asarray(cfg_mask[i].cpu().numpy())))
+                newdict[k] = v[:,idx.tolist()].clone()
+                i = i + 1
+            elif 'to_out.0.weight' in k:
+                # print(k)
+                # print(v.size())
+                # print('----------')
+                idx = np.squeeze(np.argwhere(np.asarray(cfg_mask[i].cpu().numpy())))
+                newdict[k] = v[:,idx.tolist()].clone()
+                i = i + 1
+
+            elif k in newmodel.state_dict():
+                newdict[k] = v
+
+        newmodel_dict.update(newdict)
+        newmodel.load_state_dict(newmodel_dict)
+
+        print('after pruning: ', end=' ')
+        print(groups, groups[0])
+        prune_output_linear_layer_(newmodel.mlp_head[4], groups[group_idx])
+
+        torch.save(newmodel, './pruned_models/vit/vit_'+str(group_idx)+'_pruned_model.pth')
+
+
+
 def main():
     use_cuda = torch.cuda.is_available()
     # load groups
@@ -210,6 +355,10 @@ def main():
     np.save(open(os.path.join(args.save, "grouping_config.npy"), "wb"), groups)
     if len(groups[0]) == 1:
         args.bce = True
+    if args.arch == 'vit':
+        model = load_model.load_pretrain_model(
+                args.arch, args.dataset, args.resume, 10, use_cuda)
+        prune_vit(model, groups)
     print(f'==> Preparing dataset {args.dataset}')
     if args.dataset in ['cifar10', 'cifar100']:
         if args.dataset == 'cifar10':
