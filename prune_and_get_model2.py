@@ -27,7 +27,7 @@ from prune_utils.layer_prune import (
     prune_shuffle_layer)
 from models.cifar.resnet import Bottleneck
 import torchvision.models as imagenet_models
-from models.cifar.vit import vit, channel_selection
+from models.cifar.vit2 import vit2, channel_selection
 from models.cifar.vit_slim import vit_slim
 from datasets import cifar
 from vit_record import ViTRecord
@@ -222,43 +222,22 @@ def prune_vit(model, groups):
     thre_index = int(total * percent)
     thre = y[thre_index]
 
-    if (groups.shape[0]*groups.shape[1]==10):
-        for i in range(groups.shape[0]):
-            dataset = cifar.CIFAR10TrainingSetWrapper(groups[i], False)
-            num_classes = 10
-            pruning_loader = torch.utils.data.DataLoader(
-                    dataset,
-                    batch_size=1000,
-                    num_workers=2,
-                    pin_memory=False)
+    dataset = cifar.CIFAR10TrainingSetWrapper([0,2,4,6,8], False)
+    num_classes = 10
+    pruning_loader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=1000,
+            num_workers=2,
+            pin_memory=False)
 
-            print('\nMake a test run to generate activations. \n Using training set.\n')
-            with ViTRecord(model, 'vit') as recorder:
-                # collect pruning data
-                #bar = tqdm(total=len(pruning_loader))
-                for batch_idx, (inputs, _) in enumerate(pruning_loader):
-                    #bar.update(1)
-                    inputs = inputs.to(device)
-                    recorder.record_batch(inputs)
-
-    if (groups.shape[0]*groups.shape[1]==100):
-        for i in range(groups.shape[0]):
-            dataset = cifar.CIFAR100TrainingSetWrapper(groups[i], False)
-            num_classes = 100
-            pruning_loader = torch.utils.data.DataLoader(
-                    dataset,
-                    batch_size=1000,
-                    num_workers=2,
-                    pin_memory=False)
-
-            print('\nMake a test run to generate activations. \n Using training set.\n')
-            with ViTRecord(model, 'vit') as recorder:
-                # collect pruning data
-                #bar = tqdm(total=len(pruning_loader))
-                for batch_idx, (inputs, _) in enumerate(pruning_loader):
-                    #bar.update(1)
-                    inputs = inputs.to(device)
-                    recorder.record_batch(inputs)
+    print('\nMake a test run to generate activations. \n Using training set.\n')
+    with ViTRecord(model, 'vit2') as recorder:
+        # collect pruning data
+        #bar = tqdm(total=len(pruning_loader))
+        for batch_idx, (inputs, _) in enumerate(pruning_loader):
+            #bar.update(1)
+            inputs = inputs.to(device)
+            recorder.record_batch(inputs)
 
     pruned = 0
     cfg = []
@@ -376,7 +355,7 @@ def main():
     np.save(open(os.path.join(args.save, "grouping_config.npy"), "wb"), groups)
     if len(groups[0]) == 1:
         args.bce = True
-    if args.arch == 'vit' or args.arch == 'vit_correct':
+    if args.arch == 'vit' or args.arch == 'vit2':
         model = load_model.load_pretrain_model(
                 args.arch, args.dataset, args.resume, 10, use_cuda)
         prune_vit(model, groups)
